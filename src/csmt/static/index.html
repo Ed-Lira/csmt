@@ -144,6 +144,7 @@
                 try {
                     // Handle text messages (transcriptions)
                     if (typeof event.data === 'string') {
+                        console.log('Received text message:', event.data);  // Debug log
                         const message = JSON.parse(event.data);
                         if (message.type === 'transcription') {
                             handleTranscription(message);
@@ -245,35 +246,38 @@
         }
 
         function handleTranscription(message) {
-            const { text, is_final, start_time, end_time } = message;
+            console.log('Received transcription:', message);  // Debug log
+            
+            const { text, is_final, start_time, end_time, turn_id, turn_duration } = message;
+            
+            // Create a new transcription element
+            const transcriptionElement = document.createElement('div');
+            transcriptionElement.className = `transcription-text ${is_final ? 'final' : 'interim'}`;
+            
+            // Format the text with turn information
+            const turnInfo = `[Turn ${turn_id} - ${turn_duration.toFixed(1)}s]`;
+            transcriptionElement.textContent = `${turnInfo} ${text}`;
             
             if (is_final) {
-                // Add final transcription
-                const div = document.createElement('div');
-                div.className = 'transcription-text final';
-                div.textContent = text;
-                transcriptionDiv.appendChild(div);
-                
-                // Clear interim text
+                // For final transcriptions, add to the top of the list
+                transcriptionDiv.insertBefore(transcriptionElement, transcriptionDiv.firstChild);
+                // Clear any interim text
                 currentInterimText = '';
-                
-                // Scroll to bottom
-                transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
             } else {
-                // Update interim text
-                currentInterimText = text;
-                
-                // Update or create interim div
-                let interimDiv = transcriptionDiv.querySelector('.transcription-text.interim');
-                if (!interimDiv) {
-                    interimDiv = document.createElement('div');
-                    interimDiv.className = 'transcription-text interim';
-                    transcriptionDiv.appendChild(interimDiv);
+                // For interim transcriptions, update or add at the top
+                const interimElement = transcriptionDiv.querySelector('.interim');
+                if (interimElement) {
+                    interimElement.textContent = `${turnInfo} ${text}`;
+                } else {
+                    transcriptionDiv.insertBefore(transcriptionElement, transcriptionDiv.firstChild);
                 }
-                interimDiv.textContent = text;
-                
-                // Scroll to bottom
-                transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
+                currentInterimText = text;
+            }
+            
+            // Keep only the last 10 transcriptions to prevent the div from growing too large
+            const transcriptions = transcriptionDiv.getElementsByClassName('transcription-text');
+            while (transcriptions.length > 10) {
+                transcriptionDiv.removeChild(transcriptions[transcriptions.length - 1]);
             }
         }
     </script>

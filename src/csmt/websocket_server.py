@@ -1,5 +1,6 @@
 """
 WebSocket server for audio streaming and transcription.
+Handles conversational turn detection and transcription.
 """
 import asyncio
 import json
@@ -53,13 +54,18 @@ class AudioStreamServer:
                 # Get transcription result
                 result = await self.transcription_service.get_transcription()
                 if result and self.clients:
-                    # Create message with transcription
+                    # Create message with transcription and turn metadata
                     message = {
                         "type": "transcription",
                         "text": result.text,
                         "is_final": result.is_final,
                         "start_time": result.start_time,
-                        "end_time": result.end_time
+                        "end_time": result.end_time,
+                        "turn_id": result.turn_id,
+                        "turn_duration": result.end_time - result.start_time,
+                        "metadata": {
+                            "language": self.transcription_service.language
+                        }
                     }
                     
                     # Send to all clients
