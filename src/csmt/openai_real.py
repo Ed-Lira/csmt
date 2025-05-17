@@ -81,10 +81,10 @@ async def log_timing_stats():
     """Log timing statistics for the current interaction."""
     if utterance_end_time is None:
         return
-        
+
     now = time.time()
     stats = []
-    
+
     if transcription_start_time:
         stats.append(f"Transcription start: {(transcription_start_time - utterance_end_time)*1000:.1f}ms")
     if transcription_end_time:
@@ -93,7 +93,7 @@ async def log_timing_stats():
         stats.append(f"Assistant start: {(assistant_start_time - utterance_end_time)*1000:.1f}ms")
     if assistant_end_time:
         stats.append(f"Assistant total: {(assistant_end_time - utterance_end_time)*1000:.1f}ms")
-    
+
     if stats:
         await console_q.put("\n=== Timing Stats ===\n")
         await console_q.put("\n".join(stats) + "\n")
@@ -103,17 +103,17 @@ async def log_timing_stats():
 async def stream_microphone(conn):
     """Capture mic audio, stream to OpenAI, and keep local copy per utterance."""
     global current_audio_bytes, current_transcript
-    
+
     loop = asyncio.get_running_loop()
     push_q: asyncio.Queue[str] = asyncio.Queue()
     current_audio: bytearray = bytearray()
     is_speaking: bool = False  # Track if we're currently in a speaking turn
     audio_chunks_collected: int = 0  # Debug counter
-    
+
     # Initialize the assistant reply buffer in the outer scope
     assistant_reply_buffer: list[str] = []
     pending_assistant_reply: Optional[str] = None  # Store complete assistant reply if we get it before transcript
-    
+
     # Circular buffer for pre-speech audio
     pre_speech_buffer = bytearray(PRE_SPEECH_BUFFER_SIZE)
     pre_speech_pos = 0
@@ -123,14 +123,14 @@ async def stream_microphone(conn):
         if status:
             loop.call_soon_threadsafe(console_q.put_nowait, f"Audio status: {status}\n")
         pcm_bytes = indata.tobytes()
-        
+
         # Always update the pre-speech buffer
         chunk_size = len(pcm_bytes)
         if chunk_size > PRE_SPEECH_BUFFER_SIZE:
             # If chunk is larger than buffer, just keep the most recent part
             pcm_bytes = pcm_bytes[-PRE_SPEECH_BUFFER_SIZE:]
             chunk_size = PRE_SPEECH_BUFFER_SIZE
-        
+
         # Update circular buffer
         space_left = PRE_SPEECH_BUFFER_SIZE - pre_speech_pos
         if chunk_size <= space_left:
@@ -140,7 +140,7 @@ async def stream_microphone(conn):
             pre_speech_buffer[pre_speech_pos:] = pcm_bytes[:space_left]
             pre_speech_buffer[:chunk_size - space_left] = pcm_bytes[space_left:]
         pre_speech_pos = (pre_speech_pos + chunk_size) % PRE_SPEECH_BUFFER_SIZE
-        
+
         # Only queue audio data if we're in a speaking turn
         if is_speaking:
             loop.call_soon_threadsafe(audio_q.put_nowait, pcm_bytes)
@@ -170,11 +170,11 @@ async def stream_microphone(conn):
     async def _await_transcripts():
         nonlocal current_audio, is_speaking, audio_chunks_collected, assistant_reply_buffer, pending_assistant_reply
         global utterance_end_time, transcription_start_time, transcription_end_time, assistant_start_time, assistant_end_time
-        
+
         async for event in conn:
             # Log all events for debugging
             await console_q.put(f"Event received: {event.type}\n")
-            
+
             if event.type == "input_audio_buffer.speech_started":
                 is_speaking = True
                 current_audio = bytearray()  # Reset audio buffer at start of speech
@@ -189,38 +189,38 @@ async def stream_microphone(conn):
                 assistant_start_time = None
                 assistant_end_time = None
                 await console_q.put("DEBUG: Reset all buffers for new interaction\n")
-                
+
                 # Add the pre-speech buffer to the start of current_audio
                 if pre_speech_pos > 0:
                     current_audio.extend(pre_speech_buffer[pre_speech_pos:])
                     current_audio.extend(pre_speech_buffer[:pre_speech_pos])
                 else:
                     current_audio.extend(pre_speech_buffer)
-                
+
                 audio_chunks_collected = 0
                 await console_q.put("Speech started - starting audio collection\n")
-                
+
             elif event.type == "input_audio_buffer.speech_stopped":
                 utterance_end_time = time.time()
                 await console_q.put(f"DEBUG: Utterance ended at {utterance_end_time}\n")
-                
+
             elif event.type == "conversation.item.input_audio_transcription.started":
                 transcription_start_time = time.time()
                 await console_q.put(f"DEBUG: Transcription started at {transcription_start_time}\n")
-                
+
             elif event.type == "conversation.item.input_audio_transcription.completed":
                 transcription_end_time = time.time()
                 transcript = event.transcript.strip()
                 await console_q.put(f"Transcription completed: {transcript}\n")
                 await console_q.put(f"DEBUG: Transcription ended at {transcription_end_time}\n")
-                
+
                 # Store the current audio and transcript
                 current_audio_bytes = bytes(current_audio)
                 current_transcript = transcript
-                
+
                 await console_q.put(f"You ➜ {transcript}\n  ↳ audio logged (size: {len(current_audio)} bytes)\n")
                 await console_q.put(f"DEBUG: Got transcript, pending reply: {pending_assistant_reply is not None}\n")
-                
+
                 # If we have a pending assistant reply, log the interaction
                 if pending_assistant_reply is not None:
                     await console_q.put("DEBUG: Logging interaction with pending assistant reply\n")
@@ -230,34 +230,26 @@ async def stream_microphone(conn):
                 # If we have an in-progress reply, wait for it to complete
                 elif assistant_reply_buffer:
                     await console_q.put("DEBUG: Waiting for assistant reply to complete\n")
-                
+
                 current_audio = bytearray()  # Start fresh for next utterance
 
             elif event.type == "response.created":
                 assistant_start_time = time.time()
                 await console_q.put(f"DEBUG: Assistant started at {assistant_start_time}\n")
-                
+
             elif event.type == "response.text.delta":
                 delta = event.delta
                 assistant_reply_buffer.append(delta)
                 await console_q.put(delta)
-                
-                # If we have both audio and transcript, log immediately
-                if current_audio_bytes is not None and current_transcript is not None:
-                    await console_q.put("DEBUG: Got assistant delta, have audio and transcript, logging interaction\n")
-                    reply = "".join(assistant_reply_buffer)
-                    await log_interaction(current_audio_bytes, current_transcript, reply)
-                    await log_timing_stats()  # Log timing after complete interaction
-                    assistant_reply_buffer.clear()
-                    current_audio_bytes = None
-                    current_transcript = None
-                    
+
+                # Don't log interaction on delta, wait for the complete response
+
             elif event.type == "response.text.done":
                 assistant_end_time = time.time()
                 await console_q.put("\n")
                 await console_q.put(f"DEBUG: Assistant ended at {assistant_end_time}\n")
                 complete_reply = "".join(assistant_reply_buffer)
-                
+
                 # If we have both audio and transcript, log immediately
                 if current_audio_bytes is not None and current_transcript is not None:
                     await console_q.put("DEBUG: Got response.done, logging final interaction\n")
@@ -267,7 +259,7 @@ async def stream_microphone(conn):
                 else:
                     await console_q.put("DEBUG: Storing complete reply for when transcript arrives\n")
                     pending_assistant_reply = complete_reply
-                
+
                 assistant_reply_buffer.clear()
                 current_audio_bytes = None
                 current_transcript = None
@@ -300,8 +292,8 @@ async def main() -> None:
             session={
                 "modalities": ["text"],  # Text-only responses
                 "input_audio_format": "pcm16",
-                "instructions": "You are a friendly assistant. Talk only in english. Use super short conversationalsentences.",
-                "input_audio_transcription": {"model": "whisper-1"},
+                "instructions": "You are a friendly human. Talk only in english. Use super short conversational sentences.",
+                "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
                 "max_response_output_tokens": 20,
                 "turn_detection": {"type": "semantic_vad"},
             }
