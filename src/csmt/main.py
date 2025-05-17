@@ -4,7 +4,7 @@ Main entry point for the CSMT application.
 import asyncio
 import os
 from aiohttp import web
-from .websocket_server import AudioStreamServer
+from websocket_server import AudioStreamServer
 
 async def serve_static(request):
     """Serve the static HTML page."""

@@ -91,8 +91,8 @@ async def log_timing_stats():
         stats.append(f"Transcription total: {(transcription_end_time - utterance_end_time)*1000:.1f}ms")
     if assistant_start_time:
         stats.append(f"Assistant start: {(assistant_start_time - utterance_end_time)*1000:.1f}ms")
-    if assistant_end_time:
-        stats.append(f"Assistant total: {(assistant_end_time - utterance_end_time)*1000:.1f}ms")
+    if assistant_end_time and assistant_start_time:
+        stats.append(f"Assistant total: {(assistant_end_time - assistant_start_time)*1000:.1f}ms")
 
     if stats:
         await console_q.put("\n=== Timing Stats ===\n")

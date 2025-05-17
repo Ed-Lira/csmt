@@ -9,7 +9,6 @@ import numpy as np
 from typing import Set, Optional
 import websockets
 from websockets.server import WebSocketServerProtocol
-from .transcription_service import TranscriptionService
 
 class AudioStreamServer:
     def __init__(self, host: str = "localhost", port: int = None):
@@ -25,65 +24,17 @@ class AudioStreamServer:
         self._broadcast_task: Optional[asyncio.Task] = None
         self._transcription_task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        
-        # Initialize transcription service
-        self.transcription_service = TranscriptionService(
-            whisper_model_size="base",  # You can change this to "tiny" for faster but less accurate results
-            device="cpu",  # Change to "cuda" if you have a GPU
-            language="en"
-        )
+
 
     async def start(self):
         """Start the WebSocket server."""
         self._loop = asyncio.get_running_loop()
         self.audio_queue = asyncio.Queue()
         self._broadcast_task = asyncio.create_task(self._broadcast_worker())
-        self._transcription_task = asyncio.create_task(self._transcription_worker())
-        
-        # Start the transcription service
-        await self.transcription_service.start()
-        
+
         async with websockets.serve(self.handle_client, self.host, self.port):
             print(f"WebSocket server started at ws://{self.host}:{self.port}")
             await asyncio.Future()  # run forever
-
-    async def _transcription_worker(self):
-        """Worker task that processes transcriptions and sends them to clients."""
-        while True:
-            try:
-                # Get transcription result
-                result = await self.transcription_service.get_transcription()
-                if result and self.clients:
-                    # Create message with transcription and turn metadata
-                    message = {
-                        "type": "transcription",
-                        "text": result.text,
-                        "is_final": result.is_final,
-                        "start_time": result.start_time,
-                        "end_time": result.end_time,
-                        "turn_id": result.turn_id,
-                        "turn_duration": result.end_time - result.start_time,
-                        "metadata": {
-                            "language": self.transcription_service.language
-                        }
-                    }
-                    
-                    # Send to all clients
-                    tasks = []
-                    for client in self.clients:
-                        try:
-                            tasks.append(asyncio.create_task(
-                                client.send(json.dumps(message))
-                            ))
-                        except websockets.exceptions.ConnectionClosed:
-                            pass
-                    
-                    if tasks:
-                        await asyncio.gather(*tasks, return_exceptions=True)
-            except Exception as e:
-                print(f"Error in transcription worker: {e}")
-            
-            await asyncio.sleep(0.1)
 
     async def _broadcast_worker(self):
         """Worker task that broadcasts audio data to connected clients."""
