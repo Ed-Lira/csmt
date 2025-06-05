@@ -18,13 +18,6 @@
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        #audioCanvas {
-            width: 100%;
-            height: 200px;
-            background-color: #000;
-            border-radius: 4px;
-            margin: 20px 0;
-        }
         .controls {
             display: flex;
             gap: 10px;
@@ -60,25 +53,43 @@
         }
         #transcription {
             margin-top: 20px;
-            padding: 15px;
-            background-color: #f8f9fa;
+            padding: 0;
+            background-color: #181818;
             border-radius: 4px;
-            border: 1px solid #dee2e6;
-            min-height: 100px;
-            max-height: 300px;
+            border: 1px solid #333;
+            min-height: 200px;
+            max-height: 400px;
             overflow-y: auto;
+            font-family: 'Fira Mono', 'Consolas', 'Menlo', 'Monaco', monospace;
+            font-size: 15px;
+            color: #e0e0e0;
         }
-        .transcription-text {
+        .log-entry {
+            padding: 6px 12px;
+            border-bottom: 1px solid #232323;
+        }
+        .log-entry:nth-child(even) {
+            background: #222;
+        }
+        .log-entry:nth-child(odd) {
+            background: #181818;
+        }
+        .log-user {
+            color: #8ec07c;
+        }
+        .log-ai {
+            color: #83a598;
+        }
+        .log-turn {
+            color: #b8bb26;
+        }
+        .assistant-response {
             margin: 5px 0;
             padding: 5px;
             border-radius: 4px;
-        }
-        .transcription-text.final {
-            background-color: #e9ecef;
-        }
-        .transcription-text.interim {
-            background-color: #fff3cd;
-            color: #856404;
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border-left: 3px solid #0c5460;
         }
     </style>
 </head>
@@ -90,42 +101,27 @@
             <button id="disconnectBtn" disabled>Disconnect</button>
         </div>
         <div id="status" class="disconnected">Disconnected</div>
-        <canvas id="audioCanvas"></canvas>
         <div id="transcription"></div>
     </div>
 
     <script>
         let ws = null;
-        let audioContext = null;
-        let canvas = document.getElementById('audioCanvas');
-        let ctx = canvas.getContext('2d');
-        let animationId = null;
-        let audioData = new Float32Array(1024); // Buffer for audio data
         let transcriptionDiv = document.getElementById('transcription');
         let currentInterimText = '';
-
-        // Set canvas size
-        function resizeCanvas() {
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
-        }
-        resizeCanvas();
-        window.addEventListener('resize', resizeCanvas);
 
         // WebSocket connection
         document.getElementById('connectBtn').addEventListener('click', () => {
             if (ws) return;
-            
+
             // Get the current host and use port 9877 for WebSocket
             const host = window.location.hostname;
             ws = new WebSocket(`ws://${host}:9877`);
-            
+
             ws.onopen = () => {
                 document.getElementById('status').textContent = 'Connected';
                 document.getElementById('status').className = 'connected';
                 document.getElementById('connectBtn').disabled = true;
                 document.getElementById('disconnectBtn').disabled = false;
-                startVisualization();
                 // Clear previous transcriptions
                 transcriptionDiv.innerHTML = '';
                 currentInterimText = '';
@@ -136,35 +132,25 @@
                 document.getElementById('status').className = 'disconnected';
                 document.getElementById('connectBtn').disabled = false;
                 document.getElementById('disconnectBtn').disabled = true;
-                stopVisualization();
                 ws = null;
             };
 
             ws.onmessage = async (event) => {
                 try {
-                    // Handle text messages (transcriptions)
+                    // Handle text messages (transcriptions and assistant responses)
                     if (typeof event.data === 'string') {
-                        console.log('Received text message:', event.data);  // Debug log
+                        console.log('Raw message received:', event.data);  // Debug log
                         const message = JSON.parse(event.data);
+                        console.log('Parsed message type:', message.type);  // Debug log
+                        
                         if (message.type === 'transcription') {
+                            console.log('Handling transcription message:', message);  // Debug log
                             handleTranscription(message);
-                            return;
-                        }
-                    }
-                    // Handle binary messages (audio)
-                    else if (event.data instanceof Blob) {
-                        const buffer = await event.data.arrayBuffer();
-                        const newData = new Float32Array(buffer.byteLength / 4);
-                        const view = new DataView(buffer);
-                        for (let i = 0; i < newData.length; i++) {
-                            newData[i] = view.getFloat32(i * 4, true);
-                        }
-                        if (newData.length > 0) {
-                            const min = Math.min(...newData);
-                            const max = Math.max(...newData);
-                            if (max !== 0 || min !== 0) {
-                                audioData = newData;
-                            }
+                        } else if (message.type === 'assistant_response') {
+                            console.log('Handling assistant response message:', message);  // Debug log
+                            handleAssistantResponse(message);
+                        } else {
+                            console.warn('Unknown message type:', message.type);  // Debug log
                         }
                     }
                 } catch (error) {
@@ -179,105 +165,35 @@
             }
         });
 
-        function startVisualization() {
-            if (!animationId) {
-                drawAudioVisualization();
-            }
-        }
-
-        function stopVisualization() {
-            if (animationId) {
-                cancelAnimationFrame(animationId);
-                animationId = null;
-            }
-            // Clear the canvas
-            ctx.fillStyle = 'rgb(0, 0, 0)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
-        // Visualization
-        function drawAudioVisualization() {
-            // Debug logging for visualization
-            console.log('Drawing visualization:', {
-                canvasWidth: canvas.width,
-                canvasHeight: canvas.height,
-                dataLength: audioData.length,
-                dataMin: Math.min(...audioData),
-                dataMax: Math.max(...audioData)
-            });
-            
-            // Clear the canvas
-            ctx.fillStyle = 'rgb(0, 0, 0)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Draw the waveform
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = 'rgb(0, 255, 0)';
-            ctx.beginPath();
-
-            const sliceWidth = canvas.width / audioData.length;
-            let x = 0;
-
-            // Find the maximum amplitude for scaling
-            let maxAmplitude = 0;
-            for (let i = 0; i < audioData.length; i++) {
-                maxAmplitude = Math.max(maxAmplitude, Math.abs(audioData[i]));
-            }
-            const scale = maxAmplitude > 0 ? (canvas.height / 2) / maxAmplitude : 1;
-
-            for (let i = 0; i < audioData.length; i++) {
-                const v = audioData[i] * scale;
-                const y = canvas.height / 2 + v;
-
-                if (i === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-
-                x += sliceWidth;
-            }
-
-            ctx.lineTo(canvas.width, canvas.height / 2);
-            ctx.stroke();
-
-            // Request the next frame
-            animationId = requestAnimationFrame(drawAudioVisualization);
-        }
-
         function handleTranscription(message) {
-            console.log('Received transcription:', message);  // Debug log
-            
             const { text, is_final, start_time, end_time, turn_id, turn_duration } = message;
-            
-            // Create a new transcription element
-            const transcriptionElement = document.createElement('div');
-            transcriptionElement.className = `transcription-text ${is_final ? 'final' : 'interim'}`;
-            
-            // Format the text with turn information
-            const turnInfo = `[Turn ${turn_id} - ${turn_duration.toFixed(1)}s]`;
-            transcriptionElement.textContent = `${turnInfo} ${text}`;
-            
-            if (is_final) {
-                // For final transcriptions, add to the top of the list
-                transcriptionDiv.insertBefore(transcriptionElement, transcriptionDiv.firstChild);
-                // Clear any interim text
-                currentInterimText = '';
-            } else {
-                // For interim transcriptions, update or add at the top
-                const interimElement = transcriptionDiv.querySelector('.interim');
-                if (interimElement) {
-                    interimElement.textContent = `${turnInfo} ${text}`;
-                } else {
-                    transcriptionDiv.insertBefore(transcriptionElement, transcriptionDiv.firstChild);
-                }
-                currentInterimText = text;
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML = `<span class="log-turn">[Turn ${turn_id} - ${turn_duration.toFixed(1)}s]</span> <span class="log-user">${text}</span>`;
+            transcriptionDiv.appendChild(logEntry);
+            transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
+            // Keep only the last 50 entries
+            while (transcriptionDiv.children.length > 50) {
+                transcriptionDiv.removeChild(transcriptionDiv.firstChild);
             }
-            
-            // Keep only the last 10 transcriptions to prevent the div from growing too large
-            const transcriptions = transcriptionDiv.getElementsByClassName('transcription-text');
-            while (transcriptions.length > 10) {
-                transcriptionDiv.removeChild(transcriptions[transcriptions.length - 1]);
+        }
+
+        function handleAssistantResponse(message) {
+            const { turn_id, user_transcript, ai_response } = message;
+            // User transcript log
+            const userEntry = document.createElement('div');
+            userEntry.className = 'log-entry';
+            userEntry.innerHTML = `<span class="log-turn">[User Turn ${turn_id}]</span> <span class="log-user">${user_transcript}</span>`;
+            transcriptionDiv.appendChild(userEntry);
+            // AI response log
+            const aiEntry = document.createElement('div');
+            aiEntry.className = 'log-entry';
+            aiEntry.innerHTML = `<span class="log-turn">[AI Response to Turn ${turn_id}]</span> <span class="log-ai">${ai_response}</span>`;
+            transcriptionDiv.appendChild(aiEntry);
+            transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
+            // Keep only the last 50 entries
+            while (transcriptionDiv.children.length > 50) {
+                transcriptionDiv.removeChild(transcriptionDiv.firstChild);
             }
         }
     </script>
